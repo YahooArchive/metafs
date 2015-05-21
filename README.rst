@@ -54,13 +54,12 @@ Getting Started
 .. code-block:: python
 
     >>> import metafs
+    >>> filer = metafs.SQLiteFiler("./test.db")
+    >>> filer.update("/")
+    >>> filer.close()
+    >>> filer.search("SELECT * FROM files")
 
 
 More Information
 ================
-* Documentation: https://metafs.readthedocs.org.
-
----------------------------------------------
-
-Code licensed under the BSD license. See LICENSE.txt
-file for terms.
+* Free software: BSD license, see LICENSE.txt for details
