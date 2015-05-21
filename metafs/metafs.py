@@ -248,7 +248,7 @@ v_size INT KEY NOT NULL, entropy REAL KEY NOT NULL)''')
                 file_version_infos = []
                 for version_info in headers["peheaders"]["version_info"]:
                     value = headers["peheaders"]["version_info"][version_info] or ""
-                    version_info_hash = hashlib.md5(version_info + value.encode('utf-8')).hexdigest()
+                    version_info_hash = hashlib.md5(version_info.encode('utf-8') + value.encode('utf-8')).hexdigest()
                     version_infos.append((version_info_hash, version_info, value))
                     file_version_infos.append((file_hash, version_info_hash))
                 cursor.executemany("INSERT OR IGNORE INTO version_infos VALUES (?, ?, ?)", version_infos)
