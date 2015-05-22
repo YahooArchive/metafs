@@ -39,7 +39,7 @@ class Filer(object):
         pass
 
     def update(self, root):
-        if not root.startswith("/"):
+        if not os.path.isabs(root):
             raise MetaFSError("Must use absolute path for update")
 
         # Use lowercase paths for OSs that default to case insensitive file systems.  This could cause problems for
