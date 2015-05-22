@@ -27,8 +27,11 @@ class MetaFSError(Exception):
 
 
 class Filer(object):
-    def __init__(self, max_parse_size=100000000):
-        self.file_magic = magic.Magic()
+    def __init__(self, max_parse_size=100000000, magic_file=None):
+        if magic_file:
+            self.file_magic = magic.Magic(magic_file=magic_file)
+        else:
+            self.file_magic = magic.Magic()
         self.max_parse_size = max_parse_size
 
     def initialize(self, storage):
@@ -127,8 +130,8 @@ class Filer(object):
 
 
 class SQLiteFiler(Filer):
-    def __init__(self, filer_path, max_parse_size=100000000):
-        super(SQLiteFiler, self).__init__(max_parse_size=max_parse_size)
+    def __init__(self, filer_path, max_parse_size=100000000, magic_file=None):
+        super(SQLiteFiler, self).__init__(max_parse_size=max_parse_size, magic_file=magic_file)
 
         if os.path.isfile(filer_path):
             self.conn = sqlite3.connect(filer_path)
