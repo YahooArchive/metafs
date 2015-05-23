@@ -157,11 +157,11 @@ class SQLiteFiler(Filer):
 
         cursor.execute('''CREATE TABLE IF NOT EXISTS directories
 (path_id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, path TEXT UNIQUE NOT NULL, mtime REAL NOT NULL,
-ctime REAL NOT NULL, atime REAL NOT NULL)''')
+atime REAL NOT NULL, ctime REAL NOT NULL)''')
 
         cursor.execute('''CREATE TABLE IF NOT EXISTS files
 (file_id INTEGER NOT NULL, path_id INTEGER NOT NULL, filename TEXT NOT NULL, magic_id INTEGER NOT NULL,
-size INTEGER NOT NULL, mtime REAL NOT NULL, ctime REAL NOT NULL, atime REAL NOT NULL,
+size INTEGER NOT NULL, mtime REAL NOT NULL, atime REAL NOT NULL, ctime REAL NOT NULL,
 PRIMARY KEY (file_id, path_id))''')
 
         cursor.execute('''CREATE TABLE IF NOT EXISTS magics
