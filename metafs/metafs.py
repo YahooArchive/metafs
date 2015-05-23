@@ -59,17 +59,13 @@ class Filer(object):
 
     def _add_dir_entry(self, path):
         # Directories are stored by the hash of their path rather than contents
-        path_hash = self._get_data_hash(path.encode('utf-8'))
         stat = os.stat(path)
-        self._update_dir_entry(path_hash, path, stat.st_mtime, stat.st_atime, stat.st_ctime)
+        self._update_dir_entry(path, stat.st_mtime, stat.st_atime, stat.st_ctime)
 
     def _add_file_entry(self, path, filename):
         file_type = None
         fullpath = os.path.join(path, filename)
         if os.path.isfile(fullpath):
-            # Get hash of path
-            path_hash = self._get_data_hash(path.encode('utf-8'))
-
             # Get stat info
             stat = os.stat(fullpath)
 
@@ -105,18 +101,18 @@ class Filer(object):
                     self._insert_meta_entry(file_hash, headers)
 
                 # This file exists in the filer and only needs updating in the fs map
-                self._update_file_entry(file_hash, path_hash, filename, file_type, stat.st_size, stat.st_mtime,
+                self._update_file_entry(file_hash, path, filename, file_type, stat.st_size, stat.st_mtime,
                                         stat.st_atime, stat.st_ctime)
 
     def _insert_meta_entry(self, file_hash, headers):
         # Insert file entry into the filer store
         pass
 
-    def _update_dir_entry(self, path_hash, path, mtime, atime, ctime):
+    def _update_dir_entry(self, path, mtime, atime, ctime):
         # Insert/Update directory entry in the filer store
         pass
 
-    def _update_file_entry(self, file_hash, path_hash, filename, file_type, size, mtime, atime, ctime):
+    def _update_file_entry(self, file_hash, path, filename, file_type, size, mtime, atime, ctime):
         # Insert/Update file entry in the filer store
         pass
 
@@ -130,12 +126,6 @@ class Filer(object):
         with open(fullpath, "rb") as fd:
             for chunk in iter(lambda: fd.read(2**20), b''):
                 hasher.update(chunk)
-        return hasher.hexdigest()
-
-    @staticmethod
-    def _get_data_hash(data):
-        hasher = hashlib.md5()
-        hasher.update(data)
         return hasher.hexdigest()
 
 
@@ -153,9 +143,9 @@ class SQLiteFiler(Filer):
         cursor = conn.cursor()
 
         cursor.execute('''CREATE TABLE IF NOT EXISTS hashes
-(hash_id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, hash TEXT UNIQUE NOT NULL)''')
+(file_id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, hash TEXT UNIQUE NOT NULL)''')
 
-        cursor.execute('''CREATE TABLE IF NOT EXISTS directories
+        cursor.execute('''CREATE TABLE IF NOT EXISTS paths
 (path_id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, path TEXT UNIQUE NOT NULL, mtime REAL NOT NULL,
 atime REAL NOT NULL, ctime REAL NOT NULL)''')
 
@@ -226,21 +216,20 @@ entropy REAL NOT NULL)''')
 
     def _insert_meta_entry(self, file_hash, headers):
         # Insert file entry into the filer store
-        file_id = self._get_hash_id(file_hash)
+        file_id = self._get_file_id(file_hash)
         self._insert_pe_headers(file_id, headers.get("peheaders"))
 
-    def _update_dir_entry(self, path_hash, path, mtime, atime, ctime):
+    def _update_dir_entry(self, path, mtime, atime, ctime):
         # Insert/Update directory entry in the filer store
-        path_id = self._get_hash_id(path_hash)
         cursor = self.conn.cursor()
-        cursor.execute("REPLACE INTO directories VALUES (?, ?, ?, ?, ?)", (path_id, path, mtime, atime, ctime))
+        cursor.execute("REPLACE INTO paths (path, mtime, atime, ctime) VALUES (?, ?, ?, ?)", (path, mtime, atime, ctime))
         cursor.close()
         self.conn.commit()
 
-    def _update_file_entry(self, file_hash, path_hash, filename, file_type, size, mtime, atime, ctime):
+    def _update_file_entry(self, file_hash, path, filename, file_type, size, mtime, atime, ctime):
         # Insert/Update fs entry in the filer store
-        file_id = self._get_hash_id(file_hash)
-        path_id = self._get_hash_id(path_hash)
+        file_id = self._get_file_id(file_hash)
+        path_id = self._get_path_id(path)
 
         if file_type is not None:
             magic_id = self._get_magic_id(file_type)
@@ -259,7 +248,7 @@ entropy REAL NOT NULL)''')
     def _check_meta_entry(self, file_hash):
         # Check to see if a file entry already exists in the filer store
         cursor = self.conn.cursor()
-        cursor.execute("SELECT hash FROM hashes WHERE hash = ?", (file_hash,))
+        cursor.execute("SELECT file_id FROM hashes WHERE hash = ?", (file_hash,))
         results = cursor.fetchall()
         cursor.close()
         return len(results)
@@ -351,17 +340,25 @@ entropy REAL NOT NULL)''')
             cursor.close()
             self.conn.commit()
 
-    def _get_hash_id(self, md5hash):
+    def _get_file_id(self, file_hash):
         cursor = self.conn.cursor()
-        cursor.execute("SELECT hash_id FROM hashes WHERE hash=?", (md5hash,))
+        cursor.execute("SELECT file_id FROM hashes WHERE hash=?", (file_hash,))
         result = cursor.fetchone()
         if not result:
-            cursor.execute("INSERT OR IGNORE INTO hashes (hash) VALUES (?)", (md5hash,))
+            cursor.execute("INSERT OR IGNORE INTO hashes (hash) VALUES (?)", (file_hash,))
             self.conn.commit()
-            cursor.execute("SELECT hash_id FROM hashes WHERE hash=?", (md5hash,))
+            cursor.execute("SELECT file_id FROM hashes WHERE hash=?", (file_hash,))
             result = cursor.fetchone()
         cursor.close()
         return result[0]
+
+    def _get_path_id(self, path):
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT path_id FROM paths WHERE path=?", (path,))
+        result = cursor.fetchone()
+        cursor.close()
+        return result[0]
+
 
     def _get_import_function_id(self, import_function_name, import_dll_id):
         cursor = self.conn.cursor()

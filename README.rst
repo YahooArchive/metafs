@@ -42,6 +42,8 @@ or from source:
 
 Getting Started
 ===============
+The Filer will not parse files above the max_parse_size provided when initializing (Default: 100000000) and can
+use a specific magic file using magic_file when initializing.
 
 .. code-block:: python
 
@@ -69,7 +71,7 @@ SQLiteFiler Tables
 
 
 +--------------------------------------------------------------------+
-| directories                                                        |
+| paths                                                              |
 +=================+===========+============+============+============+
 | path_id INTEGER | path TEXT | mtime REAL | atime REAL | ctime REAL |
 +-----------------+-----------+------------+------------+------------+
