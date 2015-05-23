@@ -33,6 +33,7 @@ setup_arguments = {
         'metafs': ['package_metadata.json']
     },
     'include_package_data': True,
+    'install_requires': ["pefile >= 1.2.10 ", "db-sqlite3 >= 0.0.1", "python-magic >= 0.4.6"]
 }
 
 
