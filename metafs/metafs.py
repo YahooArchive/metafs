@@ -177,7 +177,7 @@ petype TEXT NOT NULL, subsystem INTEGER NOT NULL)''')
         cursor.execute('''CREATE TABLE IF NOT EXISTS export_functions
 (export_function_id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, export_function TEXT UNIQUE NOT NULL)''')
 
-        cursor.execute('''CREATE TABLE IF NOT EXISTS file_exports
+        cursor.execute('''CREATE TABLE IF NOT EXISTS file_export_functions
 (file_id INTEGER NOT NULL, export_function_id INTEGER NOT NULL)''')
 
         cursor.execute('''CREATE TABLE IF NOT EXISTS import_dlls
@@ -288,13 +288,13 @@ entropy REAL NOT NULL)''')
             export_dll_id = self._get_export_dll_id(export_dll_name)
             functions = exports.get("functions")
 
-            file_exports = []
+            file_export_functions = []
             for function in functions:
                 export_function_name = function.get("name") or "0x%0.4x" % function.get("ordinal")
                 export_function_id = self._get_export_function_id(export_function_name)
-                file_exports.append((file_id, export_function_id))
+                file_export_functions.append((file_id, export_function_id))
             cursor = self.conn.cursor()
-            cursor.executemany("INSERT OR IGNORE INTO file_exports VALUES (?, ?)", file_exports)
+            cursor.executemany("INSERT OR IGNORE INTO file_export_functions VALUES (?, ?)", file_export_functions)
             cursor.close()
             self.conn.commit()
         else:
