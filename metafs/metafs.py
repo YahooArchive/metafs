@@ -17,9 +17,8 @@ import sys
 
 # TODO Check structure of db and reset if necessary
 # TODO ELF/Mach-O Headers
-# TODO anomaly, type, and subsystem handling
-# TODO filemagic for Windows
 # TODO verify proper behavior of section names character sets
+# TODO Allow for lack of magic
 
 
 class MetaFSError(Exception):
@@ -58,7 +57,7 @@ class Filer(object):
 
     def _add_dir_entry(self, path):
         # Directories are stored by the hash of their path rather than contents
-        path_hash = hashlib.md5(path.encode('utf-8')).hexdigest()
+        path_hash = self._get_data_hash(path.encode('utf-8'))
         stat = os.stat(path)
         self._update_dir_entry(path_hash, path, stat.st_mtime, stat.st_atime, stat.st_ctime)
 
@@ -67,7 +66,7 @@ class Filer(object):
         fullpath = os.path.join(path, filename)
         if os.path.isfile(fullpath):
             # Get hash of path
-            path_hash = hashlib.md5(path.encode('utf-8')).hexdigest()
+            path_hash = self._get_data_hash(path.encode('utf-8'))
 
             # Get stat info
             stat = os.stat(fullpath)
@@ -125,7 +124,12 @@ class Filer(object):
         with open(fullpath, "rb") as fd:
             for chunk in iter(lambda: fd.read(2**20), b''):
                 hasher.update(chunk)
+        return hasher.hexdigest()
 
+    @staticmethod
+    def _get_data_hash(data):
+        hasher = hashlib.md5()
+        hasher.update(data)
         return hasher.hexdigest()
 
 
@@ -143,44 +147,68 @@ class SQLiteFiler(Filer):
         cursor = conn.cursor()
 
         cursor.execute('''CREATE TABLE IF NOT EXISTS directories
-(path_hash TEXT PRIMARY KEY NOT NULL, path TEXT NOT NULL, mtime INT NOT NULL, ctime INT NOT NULL,
- atime INT NOT NULL)''')
+(path_hash TEXT PRIMARY KEY NOT NULL, path TEXT NOT NULL, mtime REAL NOT NULL, ctime REAL NOT NULL,
+ atime REAL NOT NULL)''')
+
         cursor.execute('''CREATE TABLE IF NOT EXISTS files
-(file_hash TEXT NOT NULL, path_hash TEXT NOT NULL, filename TEXT KEY NOT NULL, magic_hash KEY TEXT NOT NULL,
-size KEY INT NOT NULL, mtime INT NOT NULL, ctime INT NOT NULL, atime INT NOT NULL,
+(file_hash TEXT NOT NULL, path_hash TEXT NOT NULL, filename TEXT NOT NULL, magic_hash TEXT NOT NULL,
+size INT NOT NULL, mtime REAL NOT NULL, ctime REAL NOT NULL, atime REAL NOT NULL,
 PRIMARY KEY (file_hash, path_hash))''')
+
         cursor.execute('''CREATE TABLE IF NOT EXISTS magic (magic_hash TEXT PRIMARY KEY NOT NULL,
-magic TEXT KEY NOT NULL)''')
+magic TEXT NOT NULL)''')
+
         cursor.execute('''CREATE TABLE IF NOT EXISTS peheaders
-(file_hash TEXT PRIMARY KEY NOT NULL, export_dll_hash TEXT KEY NOT NULL, compile_time INT KEY NOT NULL,
-petype TEXT KEY NOT NULL, subsystem INT KEY NOT NULL)''')
+(file_hash TEXT PRIMARY KEY NOT NULL, export_dll_hash TEXT NOT NULL, compile_time INT NOT NULL,
+petype TEXT NOT NULL, subsystem INT NOT NULL)''')
+
         cursor.execute('''CREATE TABLE IF NOT EXISTS export_dlls
 (export_dll_hash TEXT PRIMARY KEY NOT NULL, export_dll TEXT NOT NULL)''')
+
         cursor.execute('''CREATE TABLE IF NOT EXISTS export_functions
 (export_function_hash TEXT PRIMARY KEY NOT NULL, export_function TEXT NOT NULL)''')
+
         cursor.execute('''CREATE TABLE IF NOT EXISTS file_exports
-(file_hash TEXT KEY NOT NULL, export_function_hash TEXT KEY NOT NULL)''')
-        cursor.execute('''CREATE TABLE IF NOT EXISTS import_dll_functions
-(import_dll_hash TEXT KEY NOT NULL, import_function_hash TEXT KEY NOT NULL)''')
-        cursor.execute('''CREATE TABLE IF NOT EXISTS import_functions
-(import_function_hash TEXT PRIMARY KEY NOT NULL, import_function TEXT NOT NULL)''')
+(file_hash TEXT NOT NULL, export_function_hash TEXT NOT NULL)''')
+
         cursor.execute('''CREATE TABLE IF NOT EXISTS import_dlls
-(import_dll_hash TEXT PRIMARY KEY NOT NULL, import_dll TEXT KEY NOT NULL)''')
+(import_dll_hash TEXT PRIMARY KEY NOT NULL, import_dll TEXT NOT NULL)''')
+
         cursor.execute('''CREATE TABLE IF NOT EXISTS file_import_dlls
-(file_hash TEXT KEY NOT NULL, import_dll_hash TEXT KEY NOT NULL)''')
+(file_hash TEXT NOT NULL, import_dll_hash TEXT NOT NULL)''')
+
+        cursor.execute('''CREATE TABLE IF NOT EXISTS import_functions
+(import_function_hash TEXT PRIMARY KEY NOT NULL, import_function TEXT NOT NULL, import_dll_hash TEXT NOT NULL)''')
+
         cursor.execute('''CREATE TABLE IF NOT EXISTS file_import_functions
-(file_hash TEXT KEY NOT NULL, import_function_hash TEXT KEY NOT NULL)''')
+(file_hash TEXT NOT NULL, import_function_hash TEXT NOT NULL)''')
+
         cursor.execute('''CREATE TABLE IF NOT EXISTS sections
-(file_hash TEXT KEY NOT NULL, name TEXT KEY NOT NULL, size INT KEY NOT NULL, v_addr TEXT KEY NOT NULL,
-v_size INT KEY NOT NULL, entropy REAL KEY NOT NULL)''')
-        cursor.execute('''CREATE TABLE IF NOT EXISTS resources
-(file_hash TEXT KEY NOT NULL, name TEXT KEY NOT NULL, size INT KEY NOT NULL, magic_hash TEXT KEY NOT NULL)''')
-        cursor.execute('''CREATE TABLE IF NOT EXISTS version_infos
-(version_info_hash TEXT PRIMARY KEY NOT NULL, version_info TEXT KEY NOT NULL, value TEXT KEY NOT NULL)''')
-        cursor.execute('''CREATE TABLE IF NOT EXISTS file_version_infos
-(file_hash TEXT KEY NOT NULL, version_info_hash TEXT KEY NOT NULL)''')
+(file_hash TEXT NOT NULL, name TEXT NOT NULL, size INT NOT NULL, v_size INT NOT NULL, entropy REAL NOT NULL)''')
+
+# Leaving this here for the future, but this makes the database unnecessarily large with little value
+#         cursor.execute('''CREATE TABLE IF NOT EXISTS resources
+# (file_hash TEXT NOT NULL, name TEXT NOT NULL, size INT NOT NULL, magic_hash TEXT NOT NULL)''')
+
+        cursor.execute('''CREATE TABLE IF NOT EXISTS version_info_fields
+(version_info_field_hash TEXT PRIMARY KEY NOT NULL, version_info_field TEXT NOT NULL)''')
+
+        cursor.execute('''CREATE TABLE IF NOT EXISTS version_info_values
+(version_info_value_hash TEXT PRIMARY KEY NOT NULL, version_info_value TEXT NOT NULL)''')
+
+        cursor.execute('''CREATE TABLE IF NOT EXISTS file_version_info
+(file_hash TEXT NOT NULL, version_info_field_hash TEXT NOT NULL, version_info_value_hash TEXT NOT NULL)''')
+
+
+#         cursor.execute('''CREATE TABLE IF NOT EXISTS version_infos
+# (version_info_hash TEXT PRIMARY KEY NOT NULL, version_info TEXT NOT NULL, value TEXT NOT NULL)''')
+#
+#         cursor.execute('''CREATE TABLE IF NOT EXISTS file_version_infos
+# (file_hash TEXT NOT NULL, version_info_hash TEXT NOT NULL)''')
+
         cursor.execute('''CREATE TABLE IF NOT EXISTS anomalies
-(file_hash TEXT KEY NOT NULL, anomaly TEXT KEY NOT NULL)''')
+(file_hash TEXT NOT NULL, anomaly TEXT NOT NULL)''')
+
         conn.commit()
         cursor.close()
         return conn
@@ -202,7 +230,7 @@ v_size INT KEY NOT NULL, entropy REAL KEY NOT NULL)''')
         if headers.get("peheaders"):
             if headers["peheaders"].get("exports"):
                 export_dll_name = headers["peheaders"]["exports"].get("dll_name") or ""
-                export_dll_hash = hashlib.md5(export_dll_name).hexdigest()
+                export_dll_hash = self._get_data_hash(export_dll_name)
                 exports = headers["peheaders"]["exports"].get("functions")
 
                 export_dlls = (export_dll_hash, export_dll_name)
@@ -212,13 +240,13 @@ v_size INT KEY NOT NULL, entropy REAL KEY NOT NULL)''')
                 file_exports = []
                 for function in exports:
                     export_function_name = function.get("name") or "0x%0.4x" % function.get("ordinal")
-                    export_function_hash = hashlib.md5(export_function_name).hexdigest()
+                    export_function_hash = self._get_data_hash(export_function_name)
                     export_functions.append((export_function_hash, export_function_name))
                     file_exports.append((file_hash, export_function_hash))
                 cursor.executemany("INSERT OR IGNORE INTO export_functions VALUES (?, ?)", export_functions)
                 cursor.executemany("INSERT OR IGNORE INTO file_exports VALUES (?, ?)", file_exports)
             else:
-                export_dll_hash = hashlib.md5().hexdigest()
+                export_dll_hash = self._get_data_hash("")
 
             peheaders = (file_hash,
                          export_dll_hash,
@@ -231,49 +259,62 @@ v_size INT KEY NOT NULL, entropy REAL KEY NOT NULL)''')
             if headers["peheaders"].get("imports"):
                 import_dlls = []
                 import_functions = []
-                import_dll_functions = []
                 file_import_dlls = []
                 file_import_functions = []
                 for import_dll_name in headers["peheaders"]["imports"]:
-                    import_dll_hash = hashlib.md5(import_dll_name).hexdigest()
-                    import_dlls.append((import_dll_hash, import_dll_name))
+                    import_dll_hash = self._get_data_hash(import_dll_name.lower())
+                    import_dlls.append((import_dll_hash, import_dll_name.lower()))
                     file_import_dlls.append((file_hash, import_dll_hash))
                     for function in headers["peheaders"]["imports"][import_dll_name]:
                         import_function_name = function.get("name") or "0x%0.4x" % function.get("ordinal")
-                        import_function_hash = hashlib.md5(import_function_name).hexdigest()
-                        import_functions.append((import_function_hash, import_function_name))
-                        import_dll_functions.append((import_dll_hash, import_function_hash))
+                        import_function_hash = self._get_data_hash(import_function_name)
+                        import_functions.append((import_function_hash, import_function_name, import_dll_hash))
                         file_import_functions.append((file_hash, import_function_hash))
                 cursor.executemany("INSERT OR IGNORE INTO import_dlls VALUES (?, ?)", import_dlls)
-                cursor.executemany("INSERT OR IGNORE INTO import_functions VALUES (?, ?)", import_functions)
-                cursor.executemany("INSERT OR IGNORE INTO import_dll_functions VALUES (?, ?)", import_dll_functions)
+                cursor.executemany("INSERT OR IGNORE INTO import_functions VALUES (?, ?, ?)", import_functions)
                 cursor.executemany("INSERT OR IGNORE INTO file_import_dlls VALUES (?, ?)", file_import_dlls)
                 cursor.executemany("INSERT OR IGNORE INTO file_import_functions VALUES (?, ?)", file_import_functions)
 
-            if headers["peheaders"].get("version_info"):
-                version_infos = []
-                file_version_infos = []
-                for version_info in headers["peheaders"]["version_info"]:
-                    value = headers["peheaders"]["version_info"][version_info] or ""
-                    version_info_hash = hashlib.md5(version_info.encode('utf-8') + value.encode('utf-8')).hexdigest()
-                    version_infos.append((version_info_hash, version_info, value))
-                    file_version_infos.append((file_hash, version_info_hash))
-                cursor.executemany("INSERT OR IGNORE INTO version_infos VALUES (?, ?, ?)", version_infos)
-                cursor.executemany("INSERT OR IGNORE INTO file_version_infos VALUES (?, ?)", file_version_infos)
+            # if headers["peheaders"].get("version_info"):
+            #     version_infos = []
+            #     file_version_infos = []
+            #     for version_info in headers["peheaders"]["version_info"]:
+            #         value = headers["peheaders"]["version_info"][version_info] or ""
+            #         version_info_hash = self._get_data_hash(version_info.encode('utf-8') + value.encode('utf-8'))
+            #         version_infos.append((version_info_hash, version_info, value))
+            #         file_version_infos.append((file_hash, version_info_hash))
+            #     cursor.executemany("INSERT OR IGNORE INTO version_infos VALUES (?, ?, ?)", version_infos)
+            #     cursor.executemany("INSERT OR IGNORE INTO file_version_infos VALUES (?, ?)", file_version_infos)
 
-            if headers["peheaders"].get("resources"):
-                resources = []
-                for resource in headers["peheaders"]["resources"]:
-                    resource_magic = hashlib.md5(resource["type"]).hexdigest()
-                    resources.append((file_hash, resource["name"], resource["size"], resource_magic))
-                cursor.executemany("INSERT OR IGNORE INTO resources VALUES (?, ?, ?, ?)", resources)
+            if headers["peheaders"].get("version_info"):
+                file_version_info = []
+                version_info_fields = []
+                version_info_values = []
+                for version_info_field in headers["peheaders"]["version_info"]:
+                    version_info_field_hash = self._get_data_hash(version_info_field.encode('utf-8'))
+                    version_info_value = headers["peheaders"]["version_info"][version_info_field] or ""
+                    version_info_value_hash = self._get_data_hash(version_info_value.encode('utf-8'))
+                    version_info_fields.append((version_info_field_hash, version_info_field))
+                    version_info_values.append((version_info_value_hash, version_info_value))
+                    file_version_info.append((file_hash, version_info_field_hash, version_info_value_hash))
+                cursor.executemany("INSERT OR IGNORE INTO version_info_fields VALUES (?, ?)", version_info_fields)
+                cursor.executemany("INSERT OR IGNORE INTO version_info_values VALUES (?, ?)", version_info_values)
+                cursor.executemany("INSERT OR IGNORE INTO file_version_info VALUES (?, ?, ?)", file_version_info)
+
+
+            # Leaving this here for the future, but this makes the database unnecessarily large with little value
+            # if headers["peheaders"].get("resources"):
+            #     resources = []
+            #     for resource in headers["peheaders"]["resources"]:
+            #         resource_magic = self._get_data_hash(resource["type"])
+            #         resources.append((file_hash, resource["name"], resource["size"], resource_magic))
+            #     cursor.executemany("INSERT OR IGNORE INTO resources VALUES (?, ?, ?, ?)", resources)
 
             if headers["peheaders"].get("sections"):
                 sections = []
                 for section in headers["peheaders"]["sections"]:
-                    sections.append((file_hash, section["name"], section["size"], section["v_addr"],
-                                     section["v_size"], section["entropy"]))
-                cursor.executemany("INSERT OR IGNORE INTO sections VALUES (?, ?, ?, ?, ?, ?)", sections)
+                    sections.append((file_hash, section["name"], section["size"], section["v_size"], section["entropy"]))
+                cursor.executemany("INSERT OR IGNORE INTO sections VALUES (?, ?, ?, ?, ?)", sections)
 
             if headers["peheaders"].get("anomalies"):
                 anomalies = []
@@ -295,7 +336,7 @@ v_size INT KEY NOT NULL, entropy REAL KEY NOT NULL)''')
         # Insert/Update fs entry in the filer store
         cursor = self.conn.cursor()
         if file_type is not None:
-            magic_hash = hashlib.md5(file_type).hexdigest()
+            magic_hash = self._get_data_hash(file_type)
             cursor.execute("INSERT OR IGNORE INTO magic VALUES (?, ?)", (magic_hash, file_type))
             cursor.execute("REPLACE INTO files VALUES (?, ?, ?, ?, ?, ?, ? , ?)",
                            (file_hash, path_hash, filename, magic_hash, size, mtime, atime, ctime))
