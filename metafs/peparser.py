@@ -13,6 +13,7 @@ import re
 
 # TODO Add Certs
 # TODO Add Resource magic types
+# TODO Callbacks
 
 class PEHeader(object):
     """Represent a PE file header"""
@@ -28,14 +29,14 @@ class PEHeader(object):
 
         self.subsystem = pe.OPTIONAL_HEADER.Subsystem
         self.compile_time = pe.FILE_HEADER.TimeDateStamp
-        self.ep = pe.OPTIONAL_HEADER.AddressOfEntryPoint
-        if hasattr(pe, 'DIRECTORY_ENTRY_TLS'):
-            self.tls = pe.DIRECTORY_ENTRY_TLS.struct.AddressOfCallBacks
+        # self.ep = pe.OPTIONAL_HEADER.AddressOfEntryPoint
+        # if hasattr(pe, 'DIRECTORY_ENTRY_TLS'):
+        #     self.tls = pe.DIRECTORY_ENTRY_TLS.struct.AddressOfCallBacks
         self.type = self._get_type(pe)
         self.exports = self._get_exports(pe)
         self.imports = self._get_imports(pe)
         self.version_info = self._get_version_info(pe)
-        self.resources = self._get_resources(pe)
+        # self.resources = self._get_resources(pe)
         self.sections = self._get_sections(pe)
         self.anomalies = self._get_anomalies(pe)
 
@@ -45,12 +46,12 @@ class PEHeader(object):
         header = {
             "subsystem": self.subsystem,
             "compile_time": self.compile_time,
-            "ep": self.ep,
+            # "ep": self.ep,
             "petype": self.type,
             "exports": self.exports,
             "imports": self.imports,
             "version_info": self.version_info,
-            "resources": self.resources,
+            # "resources": self.resources,
             "sections": self.sections,
             "anomalies": self.anomalies
         }
@@ -61,13 +62,13 @@ class PEHeader(object):
     def _get_type(pe):
         # PE Type
         if pe.is_exe():
-            pe_type = 0
+            pe_type = "exe"
         elif pe.is_dll():
-            pe_type = 1
+            pe_type = "dll"
         elif pe.is_driver():
-            pe_type = 2
+            pe_type = "drv"
         else:
-            pe_type = 4
+            pe_type = "unk"
         return pe_type
 
     @staticmethod

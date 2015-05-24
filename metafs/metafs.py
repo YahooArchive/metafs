@@ -138,6 +138,12 @@ class SQLiteFiler(Filer):
         else:
             self.conn = self.initialize(filer_path)
 
+        cursor = self.conn.cursor()
+        cursor.execute("PRAGMA synchronous=OFF")
+        cursor.execute("PRAGMA journal_mode=MEMORY")
+        cursor.close()
+
+
     def initialize(self, storage):
         conn = sqlite3.connect(storage)
         cursor = conn.cursor()
@@ -158,30 +164,26 @@ PRIMARY KEY (file_id, path_id))''')
 (magic_id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, magic TEXT UNIQUE NOT NULL)''')
 
         cursor.execute('''CREATE TABLE IF NOT EXISTS peheaders
-(file_id INTEGER PRIMARY KEY NOT NULL, export_dll_id INTEGER NOT NULL, compile_time INTEGER NOT NULL,
-petype TEXT NOT NULL, subsystem INTEGER NOT NULL)''')
+(file_id INTEGER PRIMARY KEY NOT NULL, compile_time INTEGER NOT NULL, petype TEXT NOT NULL,
+subsystem INTEGER NOT NULL)''')
 
-        cursor.execute('''CREATE TABLE IF NOT EXISTS export_dlls
-(export_dll_id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, export_dll TEXT UNIQUE NOT NULL)''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS dlls
+(dll_id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, name TEXT UNIQUE NOT NULL)''')
 
-        cursor.execute('''CREATE TABLE IF NOT EXISTS export_functions
-(export_function_id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, export_function TEXT UNIQUE NOT NULL)''')
-
-        cursor.execute('''CREATE TABLE IF NOT EXISTS file_export_functions
-(file_id INTEGER NOT NULL, export_function_id INTEGER NOT NULL)''')
-
-        cursor.execute('''CREATE TABLE IF NOT EXISTS import_dlls
-(import_dll_id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, import_dll TEXT UNIQUE NOT NULL)''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS functions
+(function_id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, name TEXT UNIQUE NOT NULL, from_dll_id INTEGER NOT NULL)''')
 
         cursor.execute('''CREATE TABLE IF NOT EXISTS file_import_dlls
-(file_id INTEGER NOT NULL, import_dll_hash TEXT UNIQUE NOT NULL)''')
+(file_id INTEGER NOT NULL, dll_id INT NOT NULL)''')
 
-        cursor.execute('''CREATE TABLE IF NOT EXISTS import_functions
-(import_function_id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, import_function TEXT UNIQUE NOT NULL,
-import_dll_id INTEGER NOT NULL)''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS file_export_dlls
+(file_id INTEGER NOT NULL, dll_id INT NOT NULL)''')
+
+        cursor.execute('''CREATE TABLE IF NOT EXISTS file_export_functions
+(file_id INTEGER NOT NULL, function_id INTEGER NOT NULL)''')
 
         cursor.execute('''CREATE TABLE IF NOT EXISTS file_import_functions
-(file_id INTEGER NOT NULL, import_function_id INTEGER NOT NULL)''')
+(file_id INTEGER NOT NULL, function_id INTEGER NOT NULL)''')
 
         cursor.execute('''CREATE TABLE IF NOT EXISTS sections
 (file_id INTEGER NOT NULL, name TEXT NOT NULL, size INTEGER NOT NULL, v_size INTEGER NOT NULL,
@@ -222,7 +224,8 @@ entropy REAL NOT NULL)''')
     def _update_dir_entry(self, path, mtime, atime, ctime):
         # Insert/Update directory entry in the filer store
         cursor = self.conn.cursor()
-        cursor.execute("REPLACE INTO paths (path, mtime, atime, ctime) VALUES (?, ?, ?, ?)", (path, mtime, atime, ctime))
+        cursor.execute("REPLACE INTO paths (path, mtime, atime, ctime) VALUES (?, ?, ?, ?)",
+                       (path, mtime, atime, ctime))
         cursor.close()
         self.conn.commit()
 
@@ -255,52 +258,48 @@ entropy REAL NOT NULL)''')
 
     def _insert_pe_headers(self, file_id, peheaders):
         if peheaders:
-            export_dll_id = self._insert_pe_exports(file_id, peheaders.get("exports"))
+            self._insert_pe_exports(file_id, peheaders.get("exports"))
             self._insert_pe_imports(file_id, peheaders.get("imports"))
             self._insert_pe_version_info(file_id, peheaders.get("version_info"))
             self._insert_pe_sections(file_id, peheaders.get("sections"))
             self._insert_pe_anomalies(file_id, peheaders.get("anomalies"))
 
             peheader = (file_id,
-                        export_dll_id,
                         peheaders.get("compile_time"),
                         peheaders.get("petype"),
                         peheaders.get("subsystem"))
             cursor = self.conn.cursor()
-            cursor.execute("INSERT OR IGNORE INTO peheaders VALUES (?, ?, ?, ?, ?)", peheader)
+            cursor.execute("INSERT OR IGNORE INTO peheaders VALUES (?, ?, ?, ?)", peheader)
             cursor.close()
             self.conn.commit()
 
     def _insert_pe_exports(self, file_id, exports):
         if exports:
-            export_dll_name = exports.get("dll_name") or ""
-            export_dll_id = self._get_export_dll_id(export_dll_name)
-            functions = exports.get("functions")
-
             file_export_functions = []
+            dll_name = exports.get("dll_name") or ""
+            dll_id = self._get_dll_id(dll_name)
+            functions = exports.get("functions")
             for function in functions:
-                export_function_name = function.get("name") or "0x%0.4x" % function.get("ordinal")
-                export_function_id = self._get_export_function_id(export_function_name)
-                file_export_functions.append((file_id, export_function_id))
+                function_name = function.get("name") or "0x%0.4x" % function.get("ordinal")
+                function_id = self._get_function_id(function_name, dll_id)
+                file_export_functions.append((file_id, function_id))
             cursor = self.conn.cursor()
+            cursor.execute("INSERT OR IGNORE INTO file_export_dlls VALUES (?, ?)", (file_id, dll_id))
             cursor.executemany("INSERT OR IGNORE INTO file_export_functions VALUES (?, ?)", file_export_functions)
             cursor.close()
             self.conn.commit()
-        else:
-            export_dll_id = self._get_export_dll_id("")
-        return export_dll_id
 
     def _insert_pe_imports(self, file_id, imports):
         if imports:
             file_import_dlls = []
             file_import_functions = []
-            for import_dll_name in imports:
-                import_dll_id = self._get_import_dll_id(import_dll_name)
-                file_import_dlls.append((file_id, import_dll_id))
-                for function in imports[import_dll_name]:
-                    import_function_name = function.get("name") or "0x%0.4x" % function.get("ordinal")
-                    import_function_id = self._get_import_function_id(import_function_name, import_dll_id)
-                    file_import_functions.append((file_id, import_function_id))
+            for dll_name in imports:
+                dll_id = self._get_dll_id(dll_name)
+                file_import_dlls.append((file_id, dll_id))
+                for function in imports[dll_name]:
+                    function_name = function.get("name") or "0x%0.4x" % function.get("ordinal")
+                    function_id = self._get_function_id(function_name, dll_id)
+                    file_import_functions.append((file_id, function_id))
             cursor = self.conn.cursor()
             cursor.executemany("INSERT OR IGNORE INTO file_import_dlls VALUES (?, ?)", file_import_dlls)
             cursor.executemany("INSERT OR IGNORE INTO file_import_functions VALUES (?, ?)", file_import_functions)
@@ -359,58 +358,26 @@ entropy REAL NOT NULL)''')
         cursor.close()
         return result[0]
 
-
-    def _get_import_function_id(self, import_function_name, import_dll_id):
+    def _get_dll_id(self, dll_name):
         cursor = self.conn.cursor()
-        cursor.execute("SELECT import_function_id FROM import_functions WHERE import_function=?",
-                       (import_function_name,))
+        cursor.execute("SELECT dll_id FROM dlls WHERE name=?", (dll_name,))
         result = cursor.fetchone()
         if not result:
-            cursor.execute("INSERT OR IGNORE INTO import_functions (import_function, import_dll_id) VALUES (?, ?)",
-                           (import_function_name, import_dll_id))
+            cursor.execute("INSERT OR IGNORE INTO dlls (name) VALUES (?)", (dll_name,))
             self.conn.commit()
-            cursor.execute("SELECT import_function_id FROM import_functions WHERE import_function=?",
-                           (import_function_name,))
+            cursor.execute("SELECT dll_id FROM dlls WHERE name=?", (dll_name,))
             result = cursor.fetchone()
         cursor.close()
         return result[0]
 
-    def _get_import_dll_id(self, import_dll_name):
-        import_dll_name = import_dll_name.lower()
+    def _get_function_id(self, function_name, dll_id):
         cursor = self.conn.cursor()
-        cursor.execute("SELECT import_dll_id FROM import_dlls WHERE import_dll=?", (import_dll_name,))
+        cursor.execute("SELECT function_id FROM functions WHERE name=?",(function_name,))
         result = cursor.fetchone()
         if not result:
-            cursor.execute("INSERT OR IGNORE INTO import_dlls (import_dll) VALUES (?)", (import_dll_name,))
+            cursor.execute("INSERT OR IGNORE INTO functions (name, from_dll_id) VALUES (?, ?)", (function_name, dll_id))
             self.conn.commit()
-            cursor.execute("SELECT import_dll_id FROM import_dlls WHERE import_dll=?", (import_dll_name,))
-            result = cursor.fetchone()
-        cursor.close()
-        return result[0]
-
-    def _get_export_dll_id(self, export_dll_name):
-        cursor = self.conn.cursor()
-        cursor.execute("SELECT export_dll_id FROM export_dlls WHERE export_dll=?", (export_dll_name,))
-        result = cursor.fetchone()
-        if not result:
-            cursor.execute("INSERT OR IGNORE INTO export_dlls (export_dll) VALUES (?)", (export_dll_name,))
-            self.conn.commit()
-            cursor.execute("SELECT export_dll_id FROM export_dlls WHERE export_dll=?", (export_dll_name,))
-            result = cursor.fetchone()
-        cursor.close()
-        return result[0]
-
-    def _get_export_function_id(self, export_function_name):
-        cursor = self.conn.cursor()
-        cursor.execute("SELECT export_function_id FROM export_functions WHERE export_function=?",
-                       (export_function_name,))
-        result = cursor.fetchone()
-        if not result:
-            cursor.execute("INSERT OR IGNORE INTO export_functions (export_function) VALUES (?)",
-                           (export_function_name,))
-            self.conn.commit()
-            cursor.execute("SELECT export_function_id FROM export_functions WHERE export_function=?",
-                           (export_function_name,))
+            cursor.execute("SELECT function_id FROM functions WHERE name=?", (function_name,))
             result = cursor.fetchone()
         cursor.close()
         return result[0]
